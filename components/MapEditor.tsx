@@ -5,6 +5,7 @@ import { MapData, Annotation } from '@/types/map';
 import { Stage, Layer, Rect, Circle, Text, Image as KonvaImage, Group } from 'react-konva';
 import Konva from 'konva';
 import useImage from 'use-image';
+import KonvaErrorBoundary from '@/components/KonvaErrorBoundary';
 
 interface MapEditorProps {
   map: MapData;
@@ -140,7 +141,8 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       type: activeTool,
       x: pointerPos.x,
       y: pointerPos.y,
-      color: '#FF0000',
+      // Use black for text annotations by default, other tools keep the red marker color
+      color: activeTool === 'text' ? '#000000' : '#FF0000',
     };
 
     if (activeTool === 'text') {
@@ -353,6 +355,9 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
         {/* Canvas */}
         <div className="flex-1 bg-gray-200 dark:bg-gray-900 p-4 overflow-auto flex items-center justify-center">
           <div className="bg-white dark:bg-gray-800 shadow-2xl">
+            {/* Wrap Konva Stage in an error boundary to show a helpful message
+                if Konva fails to initialize (Brave shields or similar). */}
+            <KonvaErrorBoundary>
             <Stage
               ref={stageRef}
               width={stageSize.width}
@@ -424,13 +429,13 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                         <Text
                           text={annot.text || 'Text'}
                           fontSize={18}
-                          fill={annot.color}
+                          // Force text fill to black for text annotations
+                          fill="#000000"
                           padding={10}
                           align="center"
                           fontFamily="Arial"
                           fontStyle="bold"
-                          stroke="white"
-                          strokeWidth={4}
+                          // Remove white stroke so the font appears solid black
                           listening={true}
                         />
                       </Group>
@@ -492,6 +497,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                 })}
               </Layer>
             </Stage>
+            </KonvaErrorBoundary>
           </div>
         </div>
       </div>
