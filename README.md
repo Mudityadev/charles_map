@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Charles Map - Mapping Platform
+
+A modern mapping platform built with Next.js that allows users to create, edit, and export maps with annotations.
+
+## Features
+
+- **Dashboard**: View all your maps in a beautiful grid layout
+- **Image Import**: Import images in any format as your map background
+- **Annotations**: Add markers, text, rectangles, and circles to your maps
+- **Interactive Editing**: Drag and drop annotations to reposition them
+- **Export**: Export your maps as JPG files
+- **Local Storage**: All maps are saved locally in your browser
 
 ## Getting Started
 
-First, run the development server:
+### Installation
+
+```bash
+npm install
+```
+
+### Development
+
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) to see the application.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Build the production version:
 
-## Learn More
+```bash
+npm run build
+npm start
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Usage
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. **Create a Map**: Click "Create New Map" on the dashboard
+2. **Import Background**: Click "Import Image" to upload an image as your map background
+3. **Add Annotations**: Select a tool (Marker, Text, Rectangle, Circle) and click on the canvas to add annotations
+4. **Edit Annotations**: Double-click text to edit, or drag annotations to reposition them
+5. **Save**: Click "Save" to save your changes
+6. **Export**: Click "Export JPG" to download your map as a JPG file
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Tech Stack
 
-## Deploy on Vercel
+- **Next.js 16** - React framework
+- **React Konva** - Canvas rendering
+- **TypeScript** - Type safety
+- **Tailwind CSS** - Styling
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Project Structure
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+charles_map/
+├── app/
+│   ├── dashboard/      # Dashboard page
+│   ├── editor/[id]/    # Map editor page
+│   └── layout.tsx      # Root layout
+├── components/
+│   └── MapEditor.tsx   # Main editor component
+├── hooks/
+│   └── useMaps.ts      # Maps state management
+├── types/
+│   └── map.ts          # Type definitions
+```
+
+## License
+
+MIT
