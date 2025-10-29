@@ -1,26 +1,67 @@
 'use client';
 
+import { useMemo, useCallback } from 'react';
+import type { MouseEvent } from 'react';
 import { useMaps } from '@/hooks/useMaps';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import type { MapData } from '@/types/map';
 
+/**
+ * Landing dashboard showcasing the user's project library with quick stats and
+ * lifecycle actions.
+ */
 export default function Dashboard() {
-  const { maps, isLoading, deleteMap } = useMaps();
+  const { maps, isLoading, deleteMap, createMap, saveMap } = useMaps();
   const router = useRouter();
 
-  const handleCreateMap = () => {
-    const newMapId = `map_${Date.now()}`;
-    router.push(`/editor/${newMapId}`);
-  };
+  const totalAnnotations = useMemo(
+    () => maps.reduce((sum, map) => sum + map.annotations.length, 0),
+    [maps],
+  );
+  const lastEdited = useMemo(
+    () => maps.reduce((latest, map) => Math.max(latest, map.lastModified), 0),
+    [maps],
+  );
+  const formattedLastEdited = lastEdited ? new Date(lastEdited).toLocaleString() : '—';
 
-  const handleDeleteMap = (e: React.MouseEvent, id: string) => {
+  /**
+   * Creates a new project scaffold and opens the editor.
+   */
+  const handleCreateMap = useCallback(() => {
+    const newMap = createMap();
+    router.push(`/editor/${newMap.id}`);
+  }, [createMap, router]);
+
+  /**
+   * Permanently removes a project.
+   */
+  const handleDeleteMap = useCallback((e: MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
     if (confirm('Are you sure you want to delete this map?')) {
       deleteMap(id);
     }
-  };
+  }, [deleteMap]);
+
+  /**
+   * Duplicates an existing project and opens the clone in the editor.
+   */
+  const handleDuplicateMap = useCallback((e: MouseEvent, mapToDuplicate: MapData) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const timestamp = Date.now();
+    const duplicated: MapData = {
+      ...mapToDuplicate,
+      id: `map_${timestamp}`,
+      name: `${mapToDuplicate.name} copy`,
+      createdAt: timestamp,
+      lastModified: timestamp,
+    };
+    saveMap(duplicated);
+    router.push(`/editor/${duplicated.id}`);
+  }, [router, saveMap]);
 
   if (isLoading) {
     return (
@@ -55,12 +96,12 @@ export default function Dashboard() {
                   <p className="mt-2 text-2xl font-semibold text-white">{maps.length}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-slate-900/40 px-4 py-3 text-slate-300 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Canvas Quality</p>
-                  <p className="mt-2 text-2xl font-semibold text-white">4K Ready</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active annotations</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{totalAnnotations}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-slate-900/40 px-4 py-3 text-slate-300 backdrop-blur">
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Exports</p>
-                  <p className="mt-2 text-2xl font-semibold text-white">JPG Premium</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Last activity</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{formattedLastEdited}</p>
                 </div>
               </div>
             </div>
@@ -156,6 +197,16 @@ export default function Dashboard() {
                       </svg>
                       {map.annotations.length} annotations
                     </span>
+                    <button
+                      onClick={(e) => handleDuplicateMap(e, map)}
+                      className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-sky-200/80 transition hover:bg-sky-500/20 hover:text-sky-100"
+                      title="Duplicate map"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 7h10a2 2 0 012 2v8a2 2 0 01-2 2H7a2 2 0 01-2-2V9a2 2 0 012-2zm3-4h7a2 2 0 012 2v9m-8-7h-5a2 2 0 00-2 2v9" />
+                      </svg>
+                      Duplicate
+                    </button>
                     <button
                       onClick={(e) => handleDeleteMap(e, map.id)}
                       className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-rose-200/80 transition hover:bg-rose-500/20 hover:text-rose-100"
