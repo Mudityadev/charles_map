@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AppProviders } from "./providers";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +35,7 @@ export default function RootLayout({
             <div className="absolute bottom-0 right-0 h-[28rem] w-[28rem] translate-x-1/3 translate-y-1/4 rounded-full bg-gradient-to-br from-cyan-500/20 via-indigo-500/20 to-transparent blur-3xl" />
           </div>
           <main className="relative">
-            {children}
+            <AppProviders>{children}</AppProviders>
           </main>
         </div>
       </body>

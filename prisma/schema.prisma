@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  avatar    String?
+  role      String   @default("viewer")
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  auditLogs AuditLog[]
+}
+
+model Org {
+  id             String   @id @default(cuid())
+  name           String
+  planTier       PlanTier @default(BASIC)
+  seats          Int      @default(1)
+  featureFlags   Json?
+  billingCustomerId String?
+  projects       Project[]
+  users          User[]
+  auditLogs      AuditLog[]
+  jobs           Job[]
+  datasets       Dataset[]
+  subscriptions  Subscription[]
+  usageMeters    UsageMeter[]
+}
+
+enum PlanTier {
+  BASIC
+  STANDARD
+  PREMIUM
+  ENTERPRISE
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  orgId         String
+  org           Org      @relation(fields: [orgId], references: [id])
+  name          String
+  description   String?
+  mapStyleJson  Json?
+  projection    String   @default("EPSG:3857")
+  createdBy     String
+  updatedAt     DateTime @updatedAt
+  layers        Layer[]
+  shareLinks    ShareLink[]
+}
+
+model Layer {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id])
+  orgId      String
+  org        Org      @relation(fields: [orgId], references: [id])
+  name       String?
+  type       LayerType
+  sourceRef  String?
+  visibility Boolean  @default(true)
+  opacity    Float    @default(1)
+  sortOrder  Int      @default(0)
+  metadata   Json?
+  features   Feature[]
+}
+
+enum LayerType {
+  vector
+  raster
+  tile
+  wms
+  threeD @map("3d")
+}
+
+model Feature {
+  id        String   @id @default(cuid())
+  layerId   String
+  layer     Layer    @relation(fields: [layerId], references: [id])
+  geometry  Json
+  properties Json
+  createdBy String
+  updatedAt DateTime @updatedAt
+  version   Int      @default(1)
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  kind      String
+  storageRef String
+  metadata  Json?
+}
+
+model Template {
+  id          String   @id @default(cuid())
+  orgId       String
+  org         Org      @relation(fields: [orgId], references: [id])
+  name        String
+  category    String
+  styleJson   Json?
+  constraints Json?
+}
+
+model Dataset {
+  id           String   @id @default(cuid())
+  orgId        String
+  org          Org      @relation(fields: [orgId], references: [id])
+  name         String
+  schema       Json
+  sourceType   String
+  sourceRef    String
+  refreshPolicy String?
+}
+
+model ShareLink {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  token     String   @unique
+  canEdit   Boolean  @default(false)
+  expiresAt DateTime?
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  orgId      String
+  org        Org      @relation(fields: [orgId], references: [id])
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  diff       Json?
+  ip         String?
+  ts         DateTime @default(now())
+}
+
+model Job {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  type      String
+  payload   Json?
+  status    String
+  progress  Int      @default(0)
+  resultRef String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RoutingProfile {
+  id          String   @id @default(cuid())
+  orgId       String
+  org         Org      @relation(fields: [orgId], references: [id])
+  mode        String
+  constraints Json?
+}
+
+model ApiKey {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id])
+  label     String
+  hash      String   @unique
+  scopes    Json?
+  lastUsedAt DateTime?
+}
+
+model Subscription {
+  id               String   @id @default(cuid())
+  orgId            String
+  org              Org      @relation(fields: [orgId], references: [id])
+  plan             String
+  status           String
+  currentPeriodEnd DateTime
+}
+
+model UsageMeter {
+  id         String   @id @default(cuid())
+  orgId      String
+  org        Org      @relation(fields: [orgId], references: [id])
+  metric     String
+  windowStart DateTime
+  windowEnd  DateTime
+  value      Float
+}
