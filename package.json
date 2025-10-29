@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@sentry/nextjs": "10.22.0",
     "konva": "^10.0.8",
     "next": "16.0.1",
     "react": "19.2.0",
