@@ -3,27 +3,25 @@
 import React from 'react';
 
 type Props = { children: React.ReactNode };
-type State = { hasError: boolean; error?: any };
+type State = { hasError: boolean; error?: Error | null };
 
 export default class KonvaErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null };
     this.reset = this.reset.bind(this);
   }
 
-  static getDerivedStateFromError(error: any) {
+  static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: any, info: any) {
-    // Keep console for debugging
-    // eslint-disable-next-line no-console
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('KonvaErrorBoundary caught an error', error, info);
   }
 
   reset() {
-    this.setState({ hasError: false, error: undefined });
+    this.setState({ hasError: false, error: null });
   }
 
   render() {
@@ -33,7 +31,7 @@ export default class KonvaErrorBoundary extends React.Component<Props, State> {
           <h3 className="font-semibold">Konva initialization error</h3>
           <p className="mt-2 text-sm">
             Konva failed to initialize in this browser. This is commonly caused by browser privacy shields
-            (for example, Brave's Shield) blocking APIs Konva relies on. Please disable Shields for this site
+            (for example, Brave&rsquo;s Shield) blocking APIs Konva relies on. Please disable Shields for this site
             or open the editor in another browser.
           </p>
 
