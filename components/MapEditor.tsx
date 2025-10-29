@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo, useCallback, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, ChangeEvent, startTransition } from 'react';
 import { MapData, Annotation, AnnotationType } from '@/types/map';
+import { useAnnotationHistory } from '@/hooks/useAnnotationHistory';
 import {
   Stage,
   Layer,
@@ -31,11 +32,20 @@ const MIN_CONNECTOR_LENGTH = 24;
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 2.5;
 
+/**
+ * Renders the imported map background image with Konva while keeping the stage
+ * event pipeline passive so pointer interaction is delegated to annotations.
+ */
 function MapBackgroundImage({ src, width, height }: { src: string; width: number; height: number }) {
   const [image] = useImage(src, 'anonymous');
   return image ? <KonvaImage image={image} width={width} height={height} listening={false} /> : null;
 }
 
+/**
+ * Provides a semantic icon for every annotation tool option displayed in the
+ * toolbar. Icons are intentionally lightweight inline SVGs to avoid additional
+ * bundle weight.
+ */
 function toolIcon(tool: AnnotationType) {
   switch (tool) {
     case 'marker':
@@ -91,8 +101,16 @@ function toolIcon(tool: AnnotationType) {
   }
 }
 
+/**
+ * High-level editor responsible for orchestrating map rendering, annotation tooling,
+ * exporting, and persistence integrations. The component intentionally keeps
+ * rendering logic declarative while delegating mutation tracking to dedicated
+ * helpers so we can deliver desktop-class interactions in a browser.
+ */
 export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
-  const [annotations, setAnnotations] = useState<Annotation[]>(map.annotations || []);
+  const { annotations, setAnnotations, reset: resetAnnotations, undo, redo, canUndo, canRedo } = useAnnotationHistory(
+    map.annotations || [],
+  );
   const [activeTool, setActiveTool] = useState<AnnotationType | null>(null);
   const [mapName, setMapName] = useState(map.name);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(map.imageData || null);
@@ -108,18 +126,72 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
   const stageRef = useRef<Konva.Stage>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
 
+  const markDirty = useCallback(() => setIsModified(true), []);
+
+  useEffect(() => {
+    resetAnnotations(map.annotations || []);
+    startTransition(() => {
+      setIsModified(false);
+    });
+  }, [map.annotations, map.id, map.lastModified, resetAnnotations]);
+
   const selectedAnnotation = useMemo(
     () => annotations.find((annotation) => annotation.id === selectedAnnotationId) || null,
     [annotations, selectedAnnotationId],
   );
 
+  /**
+   * Imperatively triggers an undo action and flags the editor as dirty so
+   * reverted states are eligible for persistence.
+   */
+  const handleUndo = useCallback(() => {
+    if (!canUndo) return;
+    undo();
+    markDirty();
+  }, [canUndo, markDirty, undo]);
+
+  /**
+   * Imperatively triggers a redo action and flags the editor as dirty so
+   * resurrected states are eligible for persistence.
+   */
+  const handleRedo = useCallback(() => {
+    if (!canRedo) return;
+    redo();
+    markDirty();
+  }, [canRedo, markDirty, redo]);
+
+  /**
+   * Updates the active drawing tool and cancels any partially constructed
+   * connector when switching modes.
+   */
   const handleToolSelection = useCallback((tool: AnnotationType | null) => {
     setActiveTool(tool);
     setPendingConnectorStart(null);
   }, []);
 
+  /**
+   * Global keyboard shortcuts enabling users to escape tool selection, delete
+   * annotations, and leverage undo/redo workflows consistent with desktop SaaS
+   * tools.
+   */
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+        return;
+      }
+
+      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'y' || e.key === 'Z')) {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
       if (e.key === 'Escape') {
         handleToolSelection(null);
         setSelectedAnnotationId(null);
@@ -128,13 +200,17 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedAnnotation) {
         setAnnotations((prev) => prev.filter((annot) => annot.id !== selectedAnnotation.id));
         setSelectedAnnotationId(null);
-        setIsModified(true);
+        markDirty();
       }
     };
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [handleToolSelection, selectedAnnotation]);
+  }, [handleRedo, handleToolSelection, handleUndo, markDirty, selectedAnnotation, setAnnotations]);
 
+  /**
+   * Utility helper that updates a single annotation by id using a mutation
+   * callback. All updates are piped through the undo stack automatically.
+   */
   const updateAnnotation = useCallback(
     (id: string, updater: (annotation: Annotation) => Annotation) => {
       setAnnotations((prev) => {
@@ -147,14 +223,19 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
           return updater(annotation);
         });
         if (didUpdate) {
-          setIsModified(true);
+          markDirty();
         }
         return updated;
       });
     },
-    [setIsModified],
+    [markDirty, setAnnotations],
   );
 
+  /**
+   * Serialises the editor state and delegates persistence to the caller. We do
+   * not reset annotations so the undo stack still allows navigating to unsaved
+   * states until the user continues editing.
+   */
   const handleSave = () => {
     const updatedMap: MapData = {
       ...map,
@@ -170,6 +251,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     setIsModified(false);
   };
 
+  /**
+   * Reads an imported image and dynamically resizes the stage to match its
+   * native dimensions, guaranteeing pixel perfect exports.
+   */
   const handleImageImport = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -177,7 +262,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       reader.onload = (event) => {
         const dataUrl = event.target?.result as string;
         setBackgroundImage(dataUrl);
-        setIsModified(true);
+        markDirty();
 
         const img = new window.Image();
         img.onload = () => {
@@ -189,6 +274,11 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }
   };
 
+  /**
+   * Converts the stage to a high quality JPEG blob and streams it to the user
+   * via an ephemeral anchor element. The operation is synchronous for snappy
+   * UX and avoids server round-trips.
+   */
   const handleExportJPG = () => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -204,6 +294,11 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     link.click();
   };
 
+  /**
+   * Applies snapping logic when grid snapping is toggled, ensuring the geometry
+   * aligns perfectly with rendered guides. The computation is intentionally
+   * memoised to avoid re-render thrash.
+   */
   const applyGridSnap = useCallback(
     (value: number) => {
       if (!snapToGrid) return value;
@@ -212,6 +307,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     [snapToGrid],
   );
 
+  /**
+   * Translates pointer coordinates into stage-space while respecting zoom so
+   * placement logic remains resolution independent.
+   */
   const getRelativePointerPosition = useCallback((stage: Konva.Stage) => {
     const pointerPosition = stage.getPointerPosition();
     if (!pointerPosition) {
@@ -224,6 +323,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     };
   }, []);
 
+  /**
+   * Handles placement of new annotations or selection clearing when the user
+   * interacts with empty canvas areas.
+   */
   const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -269,7 +372,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
         };
         setAnnotations((prev) => [...prev, annotation]);
         setSelectedAnnotationId(annotation.id);
-        setIsModified(true);
+        markDirty();
       }
       return;
     }
@@ -282,7 +385,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       };
       setAnnotations((prev) => [...prev, annotation]);
       setSelectedAnnotationId(annotation.id);
-      setIsModified(true);
+      markDirty();
       return;
     }
 
@@ -293,7 +396,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       };
       setAnnotations((prev) => [...prev, annotation]);
       setSelectedAnnotationId(annotation.id);
-      setIsModified(true);
+      markDirty();
       return;
     }
 
@@ -304,7 +407,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       };
       setAnnotations((prev) => [...prev, annotation]);
       setSelectedAnnotationId(annotation.id);
-      setIsModified(true);
+      markDirty();
       return;
     }
 
@@ -334,11 +437,14 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
       setAnnotations((prev) => [...prev, annotation]);
       setSelectedAnnotationId(annotation.id);
       setPendingConnectorStart(null);
-      setIsModified(true);
+      markDirty();
       return;
     }
   };
 
+  /**
+   * Enables inline text editing for textual annotations via a simple prompt.
+   */
   const handleAnnotationDoubleClick = (annot: Annotation) => {
     if (annot.type === 'text') {
       const newText = prompt('Edit text:', annot.text || '');
@@ -348,6 +454,9 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }
   };
 
+  /**
+   * Applies snapping to dragged annotations and records the new position.
+   */
   const handleAnnotationDragEnd = (annot: Annotation, e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
     const newPosition = {
@@ -358,6 +467,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     updateAnnotation(annot.id, (prev) => ({ ...prev, ...newPosition }));
   };
 
+  /**
+   * Normalises Konva's transform output into width/height/rotation deltas for
+   * rectangle annotations.
+   */
   const handleRectangleTransform = (annot: Annotation, node: Konva.Rect) => {
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
@@ -378,6 +491,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }));
   };
 
+  /**
+   * Normalises Konva's transform output for circle annotations and enforces the
+   * minimum radius.
+   */
   const handleCircleTransform = (annot: Annotation, node: Konva.Circle) => {
     const scaleX = node.scaleX();
     node.scaleX(1);
@@ -395,6 +512,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }));
   };
 
+  /**
+   * Converts Konva transform data to new bounds for text annotations so users
+   * can resize content blocks.
+   */
   const handleTextTransform = (annot: Annotation, node: Konva.Text) => {
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
@@ -415,6 +536,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }));
   };
 
+  /**
+   * Updates connector geometries after drag/scale interactions while maintaining
+   * their mathematical orientation.
+   */
   const handleConnectorTransform = (annot: Annotation, node: Konva.Line | Konva.Arrow) => {
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
@@ -435,6 +560,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }));
   };
 
+  /**
+   * Smooth zoom handler that clamps the zoom range for predictable viewport
+   * control on both desktop trackpads and mobile pinch gestures.
+   */
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const direction = e.evt.deltaY > 0 ? -0.08 : 0.08;
@@ -462,6 +591,10 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     }
   }, [annotations, selectedAnnotationId]);
 
+  /**
+   * Creates an offset clone of the selected annotation to accelerate repetitive
+   * layout tasks.
+   */
   const duplicateSelected = () => {
     if (!selectedAnnotation) return;
     const duplicated: Annotation = {
@@ -472,39 +605,57 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     };
     setAnnotations((prev) => [...prev, duplicated]);
     setSelectedAnnotationId(duplicated.id);
-    setIsModified(true);
+    markDirty();
   };
 
+  /**
+   * Removes the currently selected annotation.
+   */
   const deleteSelected = () => {
     if (!selectedAnnotation) return;
     setAnnotations((prev) => prev.filter((annot) => annot.id !== selectedAnnotation.id));
     setSelectedAnnotationId(null);
-    setIsModified(true);
+    markDirty();
   };
 
+  /**
+   * Moves the selected annotation to the end of the render array, effectively
+   * bringing it to the front of the canvas.
+   */
   const bringToFront = () => {
     if (!selectedAnnotation) return;
     setAnnotations((prev) => {
       const remaining = prev.filter((annot) => annot.id !== selectedAnnotation.id);
       return [...remaining, selectedAnnotation];
     });
-    setIsModified(true);
+    markDirty();
   };
 
+  /**
+   * Moves the selected annotation to the beginning of the render array so it
+   * renders behind all other shapes.
+   */
   const sendToBack = () => {
     if (!selectedAnnotation) return;
     setAnnotations((prev) => {
       const remaining = prev.filter((annot) => annot.id !== selectedAnnotation.id);
       return [selectedAnnotation, ...remaining];
     });
-    setIsModified(true);
+    markDirty();
   };
 
+  /**
+   * Applies targeted updates to the selected annotation without needing the
+   * caller to know the annotation id.
+   */
   const updateSelectedAnnotation = (changes: Partial<Annotation>) => {
     if (!selectedAnnotation) return;
     updateAnnotation(selectedAnnotation.id, (prev) => ({ ...prev, ...changes }));
   };
 
+  /**
+   * Resets the zoom level to 1, ensuring a quick way to re-centre the stage.
+   */
   const resetView = () => {
     setZoom(1);
   };
@@ -539,6 +690,56 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
     );
   }, [gridEnabled, stageSize.height, stageSize.width]);
 
+  const formatNumber = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return '0';
+    return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  }, []);
+
+  /**
+   * Derives geometric insights for the selected annotation so power users can
+   * iterate precisely.
+   */
+  const selectedAnnotationMetrics = useMemo(() => {
+    if (!selectedAnnotation) return null;
+    const metrics: { label: string; value: string }[] = [
+      { label: 'Position X', value: `${formatNumber(selectedAnnotation.x)} px` },
+      { label: 'Position Y', value: `${formatNumber(selectedAnnotation.y)} px` },
+    ];
+
+    if (selectedAnnotation.type === 'rectangle') {
+      const width = selectedAnnotation.width ?? 0;
+      const height = selectedAnnotation.height ?? 0;
+      metrics.push({ label: 'Width', value: `${formatNumber(width)} px` });
+      metrics.push({ label: 'Height', value: `${formatNumber(height)} px` });
+      metrics.push({ label: 'Area', value: `${formatNumber(width * height)} px²` });
+      metrics.push({ label: 'Perimeter', value: `${formatNumber(2 * (width + height))} px` });
+    } else if (selectedAnnotation.type === 'circle') {
+      const radius = selectedAnnotation.radius ?? 0;
+      const diameter = radius * 2;
+      metrics.push({ label: 'Radius', value: `${formatNumber(radius)} px` });
+      metrics.push({ label: 'Diameter', value: `${formatNumber(diameter)} px` });
+      metrics.push({ label: 'Area', value: `${formatNumber(Math.PI * radius * radius)} px²` });
+      metrics.push({ label: 'Circumference', value: `${formatNumber(2 * Math.PI * radius)} px` });
+    } else if (selectedAnnotation.type === 'arrow' || selectedAnnotation.type === 'line') {
+      const points = selectedAnnotation.points ?? [];
+      if (points.length >= 4) {
+        const dx = points[points.length - 2] ?? 0;
+        const dy = points[points.length - 1] ?? 0;
+        const length = Math.hypot(dx, dy);
+        const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+        metrics.push({ label: 'Length', value: `${formatNumber(length)} px` });
+        metrics.push({ label: 'Angle', value: `${formatNumber(angle)}°` });
+      }
+      metrics.push({ label: 'Stroke', value: `${formatNumber(selectedAnnotation.strokeWidth ?? 0)} px` });
+    } else if (selectedAnnotation.type === 'text') {
+      const contentLength = selectedAnnotation.text?.trim().length ?? 0;
+      metrics.push({ label: 'Characters', value: contentLength.toString() });
+      metrics.push({ label: 'Font size', value: `${formatNumber(selectedAnnotation.fontSize ?? 18)} px` });
+    }
+
+    return metrics;
+  }, [formatNumber, selectedAnnotation]);
+
   return (
     <div className="min-h-screen px-4 py-6 sm:px-8">
       <div className="mx-auto flex min-h-[calc(100vh_-_3rem)] max-w-[1400px] flex-col gap-6">
@@ -560,7 +761,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                   value={mapName}
                   onChange={(e) => {
                     setMapName(e.target.value);
-                    setIsModified(true);
+                    markDirty();
                   }}
                   className="w-full rounded-2xl border border-white/10 bg-slate-900/40 px-4 py-3 text-lg font-semibold text-white placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
                   placeholder="Untitled premium map"
@@ -574,6 +775,28 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageImport} className="hidden" />
+              <button
+                onClick={handleUndo}
+                disabled={!canUndo}
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-slate-200/40 hover:bg-slate-100/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title="Undo (⌘/Ctrl + Z)"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 5H8m0 0l4-4m-4 4l4 4M4 12a8 8 0 1113.856 5.856" />
+                </svg>
+                Undo
+              </button>
+              <button
+                onClick={handleRedo}
+                disabled={!canRedo}
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-slate-200/40 hover:bg-slate-100/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title="Redo (⌘/Ctrl + Shift + Z)"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 5h4m0 0l-4-4m4 4l-4 4M20 12a8 8 0 10-13.856 5.856" />
+                </svg>
+                Redo
+              </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:border-sky-200/40 hover:bg-sky-400/20 hover:text-white"
@@ -692,7 +915,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                             <button
                               onClick={() => {
                                 setAnnotations((prev) => prev.filter((a) => a.id !== annot.id));
-                                setIsModified(true);
+                                markDirty();
                                 if (selectedAnnotationId === annot.id) {
                                   setSelectedAnnotationId(null);
                                 }
@@ -738,6 +961,20 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                     </button>
                   </div>
                 </div>
+
+                {selectedAnnotationMetrics && (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-200">
+                    <h5 className="text-xs uppercase tracking-[0.25em] text-slate-400">Geometry</h5>
+                    <div className="mt-2 space-y-2">
+                      {selectedAnnotationMetrics.map((metric) => (
+                        <div key={metric.label} className="flex items-center justify-between text-xs text-slate-300">
+                          <span>{metric.label}</span>
+                          <span className="font-mono text-sky-200">{metric.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid gap-3">
                   <label className="text-xs uppercase tracking-[0.25em] text-slate-400">Color</label>
@@ -898,7 +1135,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                     value={Math.round(stageSize.width)}
                     onChange={(e) => {
                       setStageSize((prev) => ({ ...prev, width: Number(e.target.value) }));
-                      setIsModified(true);
+                      markDirty();
                     }}
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm text-white focus:border-sky-400 focus:outline-none"
                   />
@@ -911,7 +1148,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                     value={Math.round(stageSize.height)}
                     onChange={(e) => {
                       setStageSize((prev) => ({ ...prev, height: Number(e.target.value) }));
-                      setIsModified(true);
+                      markDirty();
                     }}
                     className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900/40 px-3 py-2 text-sm text-white focus:border-sky-400 focus:outline-none"
                   />
@@ -924,7 +1161,7 @@ export function MapEditor({ map, onSave, onBack }: MapEditorProps) {
                   value={backgroundColor}
                   onChange={(e) => {
                     setBackgroundColor(e.target.value);
-                    setIsModified(true);
+                    markDirty();
                   }}
                   className="mt-1 h-10 w-full cursor-pointer rounded-2xl border border-white/10 bg-slate-900/40"
                 />

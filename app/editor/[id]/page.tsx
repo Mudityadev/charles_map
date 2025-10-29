@@ -11,22 +11,22 @@ export default function EditorPage() {
   const router = useRouter();
   const { getMap, saveMap } = useMaps();
   const mapId = useMemo(() => params.id as string, [params.id]);
+  /**
+   * Generates a base map object used when opening a fresh project.
+   */
+  const buildDefaultMap = useCallback((): MapData => ({
+    id: mapId,
+    name: 'Untitled Map',
+    createdAt: Date.now(),
+    lastModified: Date.now(),
+    annotations: [],
+    width: 800,
+    height: 600,
+    backgroundColor: '#0f172a',
+  }), [mapId]);
   const [map, setMap] = useState<MapData>(() => {
     const existingMap = getMap(mapId);
-    if (existingMap) {
-      return existingMap;
-    }
-
-    return {
-      id: mapId,
-      name: 'Untitled Map',
-      createdAt: Date.now(),
-      lastModified: Date.now(),
-      annotations: [],
-      width: 800,
-      height: 600,
-      backgroundColor: '#0f172a',
-    };
+    return existingMap ?? buildDefaultMap();
   });
 
   useEffect(() => {
@@ -35,25 +35,24 @@ export default function EditorPage() {
       if (existingMap) {
         setMap(existingMap);
       } else {
-        setMap({
-          id: mapId,
-          name: 'Untitled Map',
-          createdAt: Date.now(),
-          lastModified: Date.now(),
-          annotations: [],
-          width: 800,
-          height: 600,
-          backgroundColor: '#0f172a',
-        });
+        const draft = buildDefaultMap();
+        setMap(draft);
+        saveMap(draft);
       }
     });
-  }, [getMap, mapId]);
+  }, [buildDefaultMap, getMap, mapId, saveMap]);
 
+  /**
+   * Persists map changes through the storage-backed hook.
+   */
   const handleSave = useCallback((updatedMap: MapData) => {
     saveMap(updatedMap);
     setMap(updatedMap);
   }, [saveMap]);
 
+  /**
+   * Returns to the dashboard view.
+   */
   const handleBack = useCallback(() => {
     router.push('/dashboard');
   }, [router]);
