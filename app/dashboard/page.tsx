@@ -3,12 +3,11 @@
 import { useMaps } from '@/hooks/useMaps';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import Image from 'next/image';
 
 export default function Dashboard() {
   const { maps, isLoading, deleteMap } = useMaps();
   const router = useRouter();
-  const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateMap = () => {
     const newMapId = `map_${Date.now()}`;
@@ -121,9 +120,11 @@ export default function Dashboard() {
               >
                 <div className="relative mb-5 overflow-hidden rounded-2xl border border-white/5 bg-slate-900/60">
                   {map.imageData ? (
-                    <img
+                    <Image
                       src={map.imageData}
                       alt={map.name}
+                      width={512}
+                      height={384}
                       className="h-48 w-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                   ) : (
